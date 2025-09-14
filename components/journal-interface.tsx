@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Loader2, History, Plus, Trash2, ChevronLeft } from "lucide-react"
-import { apiEndpoints } from "@/lib/config"
+import { apiEndpoints, config } from "@/lib/config"
 
 interface AnalysisResult {
   limitingBelief: string
@@ -20,7 +20,7 @@ interface HistoryEntry {
   date: string
   goal?: string
   journalEntry: string
-  analysis: AnalysisResult
+  analysis?: AnalysisResult
 }
 
 export function JournalInterface() {
@@ -88,6 +88,43 @@ export function JournalInterface() {
     } catch (error) {
       console.error("Failed to delete entry:", error)
       setError("Failed to delete entry. Please try again.")
+    }
+  }
+
+  const handleRecordThought = async () => {
+    if (!journalEntry.trim()) {
+      setError("Please write something in your journal first.")
+      return
+    }
+
+    if (!session?.user?.email) {
+      setError("You must be logged in to record thoughts.")
+      return
+    }
+
+    try {
+      const response = await fetch(`${config.apiUrl}/record-thought`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userEmail: session.user.email,
+          journalEntry: journalEntry.trim(),
+          goal: goal.trim() || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to record thought");
+      }
+
+      await loadUserHistory();
+      handleReset();
+
+    } catch (err) {
+      setError("Something went wrong. Please try again.")
+      console.error("Record thought error:", err)
     }
   }
 
@@ -196,10 +233,24 @@ export function JournalInterface() {
                       <p className="text-sm text-muted-foreground bg-gray-50 p-3 rounded-lg">{entry.journalEntry}</p>
                     </div>
 
-                    <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
-                      <h4 className="font-medium text-amber-800 text-sm mb-2">Limiting Belief</h4>
-                      <p className="text-sm text-amber-900">{entry.analysis.limitingBelief}</p>
-                    </div>
+                    {entry.analysis && (
+                      <>
+                        <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
+                          <h4 className="font-medium text-amber-800 text-sm mb-2">Limiting Belief</h4>
+                          <p className="text-sm text-amber-900">{entry.analysis.limitingBelief}</p>
+                        </div>
+
+                        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                          <h4 className="font-medium text-blue-800 text-sm mb-2">Explanation</h4>
+                          <p className="text-sm text-blue-900">{entry.analysis.explanation}</p>
+                        </div>
+
+                        <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                          <h4 className="font-medium text-green-800 text-sm mb-2">Reframing Exercise</h4>
+                          <p className="text-sm text-green-900">{entry.analysis.reframingExercise}</p>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -273,6 +324,14 @@ export function JournalInterface() {
                 ) : (
                   "Analyze My Entry"
                 )}
+              </Button>
+
+              <Button
+                onClick={handleRecordThought}
+                disabled={!journalEntry.trim()}
+                className="bg-green-600 text-white hover:bg-green-700 flex-1 h-12 text-base font-medium"
+              >
+                Record Thought
               </Button>
 
               {(journalEntry || analysis || showGoalInput) && (

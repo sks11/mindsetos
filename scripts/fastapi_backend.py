@@ -62,14 +62,40 @@ class JournalHistoryEntry(BaseModel):
     user_email: str
     journal_entry: str
     user_goal: Optional[str] = None
-    limiting_belief: str
-    explanation: str
-    reframing_exercise: str
+    limiting_belief: Optional[str] = None
+    explanation: Optional[str] = None
+    reframing_exercise: Optional[str] = None
     created_at: Optional[str] = None
 
 class SaveJournalRequest(BaseModel):
     userEmail: str
     entry: JournalHistoryEntry
+
+class RecordThoughtRequest(BaseModel):
+    userEmail: str
+    journalEntry: str
+    goal: Optional[str] = None
+
+@app.post("/record-thought")
+async def record_thought(request: RecordThoughtRequest):
+    """Save a journal entry without analysis."""
+    try:
+        journal_entry = {
+            "user_email": request.userEmail,
+            "journal_entry": request.journalEntry.strip(),
+            "user_goal": request.goal.strip() if request.goal and request.goal.strip() else None,
+        }
+        
+        result = supabase.table("journal_entries").insert(journal_entry).execute()
+        
+        if result.data:
+            return {"message": "Thought recorded successfully", "entry": result.data[0]}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to record thought")
+            
+    except Exception as e:
+        print(f"DEBUG: Error recording thought: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to record thought: {str(e)}")
 
 @app.post("/analyze-journal", response_model=AnalysisResponse)
 async def analyze_journal(request: JournalRequest):
@@ -162,12 +188,16 @@ async def get_user_history(user_email: str):
                 "date": datetime.fromisoformat(entry["created_at"].replace('Z', '+00:00')).strftime("%m/%d/%Y"),
                 "goal": entry["user_goal"],
                 "journalEntry": entry["journal_entry"],
-                "analysis": {
+                "analysis": None
+            }
+            
+            if entry.get("limiting_belief"):
+                history_entry["analysis"] = {
                     "limitingBelief": entry["limiting_belief"],
                     "explanation": entry["explanation"],
                     "reframingExercise": entry["reframing_exercise"]
                 }
-            }
+            
             history.append(history_entry)
         
         return history
