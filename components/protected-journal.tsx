@@ -31,7 +31,7 @@ export function ProtectedJournal() {
   }
 
   if (status === "unauthenticated") {
-    return null // Will redirect to signin
+    return null
   }
 
   const handleSignOut = () => {
