@@ -21,6 +21,10 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://localhost:3000",
+        "https://*.vercel.app",  # Allow Vercel deployments
+        "https://mindsetos-ai.vercel.app",  # Your specific Vercel domain
+        "https://mindsetos.vercel.app",  # Alternative domain
+        "*",  # Temporary - allow all origins for initial testing
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -191,4 +195,6 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use PORT environment variable for Cloud Run compatibility
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

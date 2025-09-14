@@ -1,0 +1,69 @@
+# Node.js dependencies and build artifacts
+node_modules/
+.next/
+out/
+build/
+
+# Python virtual environment and cache
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment files
+.env*
+
+# Git and version control
+.git/
+.gitignore
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Documentation and README
+README.md
+*.md
+
+# Frontend specific files (not needed for backend)
+components/
+app/
+public/
+styles/
+hooks/
+lib/
+*.json
+*.mjs
+*.config.*
+
+# Google OAuth credentials
+GoogleOuth/
+client_secret*.json
+*client_secret*.json
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts 

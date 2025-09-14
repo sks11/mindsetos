@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Loader2, History, Plus, Trash2, ChevronLeft } from "lucide-react"
+import { apiEndpoints } from "@/lib/config"
 
 interface AnalysisResult {
   limitingBelief: string
@@ -40,7 +41,7 @@ export function JournalInterface() {
     
     try {
       setIsLoadingHistory(true)
-      const response = await fetch(`http://localhost:8000/user-history/${encodeURIComponent(session.user.email)}`)
+      const response = await fetch(apiEndpoints.userHistory(session.user.email))
       if (response.ok) {
         const userHistory = await response.json()
         setHistory(userHistory)
@@ -73,7 +74,7 @@ export function JournalInterface() {
     if (!session?.user?.email) return
 
     try {
-      const response = await fetch(`http://localhost:8000/user-history/${encodeURIComponent(session.user.email)}/${id}`, {
+      const response = await fetch(apiEndpoints.deleteHistoryEntry(session.user.email, id), {
         method: "DELETE",
       })
 
@@ -105,7 +106,7 @@ export function JournalInterface() {
     setError(null)
 
     try {
-      const response = await fetch("http://localhost:8000/analyze-journal", {
+      const response = await fetch(apiEndpoints.analyzeJournal, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
