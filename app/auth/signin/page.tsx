@@ -1,25 +1,12 @@
 "use client"
 
-import { signIn, getSession } from "next-auth/react"
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { signIn } from "next-auth/react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function SignIn() {
-  const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
-
-  useEffect(() => {
-    // Check if user is already signed in
-    const checkSession = async () => {
-      const session = await getSession()
-      if (session) {
-        router.push('/')
-      }
-    }
-    checkSession()
-  }, [router])
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true)

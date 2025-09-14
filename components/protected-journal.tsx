@@ -1,23 +1,12 @@
 "use client"
 
 import { useSession, signOut } from "next-auth/react"
-import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { JournalInterface } from "@/components/journal-interface"
 
 export function ProtectedJournal() {
-  const { data: session, status } = useSession()
-  const router = useRouter()
-  const [hasRedirected, setHasRedirected] = useState(false)
-
-  useEffect(() => {
-    if (status === "unauthenticated" && !hasRedirected) {
-      setHasRedirected(true)
-      router.replace("/auth/signin")
-    }
-  }, [status, router, hasRedirected])
+  const { data: session, status } = useSession({ required: true })
 
   if (status === "loading") {
     return (
@@ -28,10 +17,6 @@ export function ProtectedJournal() {
         </div>
       </div>
     )
-  }
-
-  if (status === "unauthenticated") {
-    return null
   }
 
   const handleSignOut = () => {
