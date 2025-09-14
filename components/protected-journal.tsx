@@ -2,7 +2,7 @@
 
 import { useSession, signOut } from "next-auth/react"
 import { useRouter } from "next/navigation"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { JournalInterface } from "@/components/journal-interface"
@@ -10,12 +10,14 @@ import { JournalInterface } from "@/components/journal-interface"
 export function ProtectedJournal() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const [hasRedirected, setHasRedirected] = useState(false)
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/auth/signin")
+    if (status === "unauthenticated" && !hasRedirected) {
+      setHasRedirected(true)
+      router.replace("/auth/signin")
     }
-  }, [status, router])
+  }, [status, router, hasRedirected])
 
   if (status === "loading") {
     return (
