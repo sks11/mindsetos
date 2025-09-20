@@ -10,7 +10,9 @@ export const config = {
 // Helper function to construct API endpoints
 export const apiEndpoints = {
   analyzeJournal: `${config.apiUrl}/analyze-journal`,
+  analyzePersonality: `${config.apiUrl}/analyze-personality`,
   userHistory: (email: string) => `${config.apiUrl}/user-history/${encodeURIComponent(email)}`,
+  personalityHistory: (email: string) => `${config.apiUrl}/personality-history/${encodeURIComponent(email)}`,
   deleteHistoryEntry: (email: string, id: string) => 
     `${config.apiUrl}/user-history/${encodeURIComponent(email)}/${id}`,
 } 

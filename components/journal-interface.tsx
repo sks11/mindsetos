@@ -452,7 +452,7 @@ export function JournalInterface() {
     
     try {
       setIsLoadingPersonalityHistory(true)
-      const response = await fetch(`${config.apiUrl}/personality-history/${session.user.email}`)
+      const response = await fetch(apiEndpoints.personalityHistory(session.user.email))
       if (response.ok) {
         const data = await response.json()
         setPersonalityHistory(data.analyses || [])
@@ -480,7 +480,7 @@ export function JournalInterface() {
     setError(null)
 
     try {
-      const response = await fetch(`${config.apiUrl}/analyze-personality`, {
+      const response = await fetch(apiEndpoints.analyzePersonality, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -496,7 +496,11 @@ export function JournalInterface() {
           setShowUpgradePrompt(true)
           return
         }
-        throw new Error("Failed to analyze personality")
+        
+        // Get the actual error message from the response
+        const errorText = await response.text()
+        console.error("DEBUG: Personality analysis failed:", response.status, errorText)
+        throw new Error(`Failed to analyze personality: ${errorText}`)
       }
 
       const result = await response.json()
@@ -524,9 +528,13 @@ export function JournalInterface() {
       if (err instanceof Error && err.message.includes('429')) {
         setError("You've exhausted your quota for the month. If you need more, upgrade your tier by sending an email request to mindsetosai@gmail.com")
         setShowUpgradePrompt(true)
+      } else if (err instanceof Error && err.message.includes('table "personality_analyses" does not exist')) {
+        setError("Personality analysis feature is being set up. Please contact support or try again later.")
       } else {
-        setError("Something went wrong. Please try again.")
+        setError(err instanceof Error ? err.message : "Something went wrong. Please try again.")
       }
+      // Reset the analysis state on error
+      setPersonalityAnalysis(null)
     } finally {
       setIsAnalyzingPersonality(false)
     }
