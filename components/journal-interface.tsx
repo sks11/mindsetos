@@ -32,6 +32,19 @@ interface AnalysisResult {
   reframingExercise: string
 }
 
+interface PersonalityAnalysis {
+  analysis_id: string
+  total_entries: number
+  analysis_date: string
+  value_system: string
+  motivators: string
+  demotivators: string
+  emotional_triggers: string
+  mindset_blocks: string
+  growth_opportunities: string
+  overall_summary: string
+}
+
 interface HistoryEntry {
   id: string
   date: string
@@ -42,7 +55,7 @@ interface HistoryEntry {
 
 export function JournalInterface() {
   const { data: session, update } = useSession() as { data: ExtendedSession | null, update: () => Promise<ExtendedSession | null> }
-  const [currentView, setCurrentView] = useState<"journal" | "history">("journal")
+  const [currentView, setCurrentView] = useState<"journal" | "history" | "personality">("journal")
   const [journalEntry, setJournalEntry] = useState("")
   const [goal, setGoal] = useState("")
   const [showGoalInput, setShowGoalInput] = useState(false)
@@ -55,6 +68,10 @@ export function JournalInterface() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState("")
   const [editingGoal, setEditingGoal] = useState("")
+  const [personalityAnalysis, setPersonalityAnalysis] = useState<PersonalityAnalysis | null>(null)
+  const [isAnalyzingPersonality, setIsAnalyzingPersonality] = useState(false)
+  const [personalityHistory, setPersonalityHistory] = useState<PersonalityAnalysis[]>([])
+  const [isLoadingPersonalityHistory, setIsLoadingPersonalityHistory] = useState(false)
 
   // Refresh session to update message count
   const refreshSession = async () => {
@@ -429,6 +446,92 @@ export function JournalInterface() {
     cancelEditing()
   }
 
+  // Load personality analysis history
+  const loadPersonalityHistory = async () => {
+    if (!session?.user?.email) return
+    
+    try {
+      setIsLoadingPersonalityHistory(true)
+      const response = await fetch(`${config.apiUrl}/personality-history/${session.user.email}`)
+      if (response.ok) {
+        const data = await response.json()
+        setPersonalityHistory(data.analyses || [])
+      }
+    } catch (error) {
+      console.error("Failed to load personality history:", error)
+    } finally {
+      setIsLoadingPersonalityHistory(false)
+    }
+  }
+
+  // Handle personality analysis
+  const handlePersonalityAnalysis = async () => {
+    if (!session?.user?.email) {
+      setError("You must be logged in to analyze your personality.")
+      return
+    }
+
+    if (history.length < 5) {
+      setError(`You need at least 5 journal entries for personality analysis. You currently have ${history.length} entries.`)
+      return
+    }
+
+    setIsAnalyzingPersonality(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`${config.apiUrl}/analyze-personality`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userEmail: session.user.email,
+        }),
+      })
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          setError("You've exhausted your quota for the month. If you need more, upgrade your tier by sending an email request to mindsetosai@gmail.com")
+          setShowUpgradePrompt(true)
+          return
+        }
+        throw new Error("Failed to analyze personality")
+      }
+
+      const result = await response.json()
+      setPersonalityAnalysis(result)
+      setCurrentView("personality")
+      
+      // Refresh personality history
+      await loadPersonalityHistory()
+      
+      // Refresh session to update message count
+      try {
+        const sessionResponse = await fetch('/api/refresh-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+        if (sessionResponse.ok) {
+          await update()
+        }
+      } catch (sessionError) {
+        console.error("Failed to refresh session:", sessionError)
+      }
+
+    } catch (err) {
+      console.error("Personality analysis error:", err)
+      if (err instanceof Error && err.message.includes('429')) {
+        setError("You've exhausted your quota for the month. If you need more, upgrade your tier by sending an email request to mindsetosai@gmail.com")
+        setShowUpgradePrompt(true)
+      } else {
+        setError("Something went wrong. Please try again.")
+      }
+    } finally {
+      setIsAnalyzingPersonality(false)
+    }
+  }
+
   if (currentView === "history") {
     return (
       <div className="max-w-2xl mx-auto space-y-6">
@@ -571,6 +674,141 @@ export function JournalInterface() {
     )
   }
 
+  if (currentView === "personality") {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <Button
+              onClick={() => setCurrentView("journal")}
+              variant="outline"
+              className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white/80"
+            >
+              <ChevronLeft className="w-4 h-4 mr-2" />
+              Back to Journal
+            </Button>
+            <h2 className="text-2xl font-semibold text-foreground">Personality Analysis</h2>
+          </div>
+        </div>
+
+        {personalityAnalysis ? (
+          <div className="space-y-6">
+            {/* Analysis Header */}
+            <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-0 shadow-lg">
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <h3 className="text-2xl font-bold text-purple-800 mb-2">Your Personality Insights</h3>
+                  <p className="text-purple-600">
+                    Analysis based on {personalityAnalysis.total_entries} journal entries
+                  </p>
+                  <p className="text-sm text-purple-500 mt-1">
+                    Generated on {new Date(personalityAnalysis.analysis_date).toLocaleDateString()}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Overall Summary */}
+            <Card className="bg-white/50 backdrop-blur-sm border-0 shadow-lg">
+              <CardContent className="p-6">
+                <h4 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                  <span className="w-2 h-2 bg-purple-500 rounded-full mr-3"></span>
+                  Overall Summary
+                </h4>
+                <p className="text-gray-700 leading-relaxed">{personalityAnalysis.overall_summary}</p>
+              </CardContent>
+            </Card>
+
+            {/* Core Insights Grid */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Value System */}
+              <Card className="bg-blue-50 border-blue-200 shadow-lg">
+                <CardContent className="p-6">
+                  <h4 className="text-lg font-semibold text-blue-800 mb-3 flex items-center">
+                    <span className="text-xl mr-2">💎</span>
+                    Value System
+                  </h4>
+                  <p className="text-blue-900 leading-relaxed">{personalityAnalysis.value_system}</p>
+                </CardContent>
+              </Card>
+
+              {/* Motivators */}
+              <Card className="bg-green-50 border-green-200 shadow-lg">
+                <CardContent className="p-6">
+                  <h4 className="text-lg font-semibold text-green-800 mb-3 flex items-center">
+                    <span className="text-xl mr-2">⚡</span>
+                    What Motivates You
+                  </h4>
+                  <p className="text-green-900 leading-relaxed">{personalityAnalysis.motivators}</p>
+                </CardContent>
+              </Card>
+
+              {/* Demotivators */}
+              <Card className="bg-orange-50 border-orange-200 shadow-lg">
+                <CardContent className="p-6">
+                  <h4 className="text-lg font-semibold text-orange-800 mb-3 flex items-center">
+                    <span className="text-xl mr-2">🔋</span>
+                    What Drains You
+                  </h4>
+                  <p className="text-orange-900 leading-relaxed">{personalityAnalysis.demotivators}</p>
+                </CardContent>
+              </Card>
+
+              {/* Emotional Triggers */}
+              <Card className="bg-red-50 border-red-200 shadow-lg">
+                <CardContent className="p-6">
+                  <h4 className="text-lg font-semibold text-red-800 mb-3 flex items-center">
+                    <span className="text-xl mr-2">💥</span>
+                    Emotional Triggers
+                  </h4>
+                  <p className="text-red-900 leading-relaxed">{personalityAnalysis.emotional_triggers}</p>
+                </CardContent>
+              </Card>
+
+              {/* Mindset Blocks */}
+              <Card className="bg-gray-50 border-gray-200 shadow-lg">
+                <CardContent className="p-6">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+                    <span className="text-xl mr-2">🚧</span>
+                    Mindset Blocks
+                  </h4>
+                  <p className="text-gray-700 leading-relaxed">{personalityAnalysis.mindset_blocks}</p>
+                </CardContent>
+              </Card>
+
+              {/* Growth Opportunities */}
+              <Card className="bg-purple-50 border-purple-200 shadow-lg">
+                <CardContent className="p-6">
+                  <h4 className="text-lg font-semibold text-purple-800 mb-3 flex items-center">
+                    <span className="text-xl mr-2">🌱</span>
+                    Growth Opportunities
+                  </h4>
+                  <p className="text-purple-900 leading-relaxed">{personalityAnalysis.growth_opportunities}</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Action Button */}
+            <div className="flex justify-center pt-6">
+              <Button
+                onClick={() => setCurrentView("journal")}
+                className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-8 py-3 text-lg"
+              >
+                Continue Journaling
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Card className="bg-white/50 backdrop-blur-sm border-0 shadow-lg">
+            <CardContent className="p-8 text-center">
+              <p className="text-muted-foreground">No personality analysis available.</p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       <div className="flex justify-between items-center">
@@ -600,14 +838,35 @@ export function JournalInterface() {
             </div>
           )}
         </div>
-        <Button
-          onClick={() => setCurrentView("history")}
-          variant="outline"
-          className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white/80"
-        >
-          <History className="w-4 h-4 mr-2" />
-          History ({history.length})
-        </Button>
+        <div className="flex gap-3">
+          <Button
+            onClick={() => setCurrentView("history")}
+            variant="outline"
+            className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white/80"
+          >
+            <History className="w-4 h-4 mr-2" />
+            History ({history.length})
+          </Button>
+          <Button
+            onClick={handlePersonalityAnalysis}
+            disabled={isAnalyzingPersonality || history.length < 5}
+            variant="outline"
+            className="border-purple-300 text-purple-700 hover:bg-purple-50 bg-white/80 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={history.length < 5 ? `Need ${5 - history.length} more entries for personality analysis` : "Analyze your personality based on journal entries"}
+          >
+            {isAnalyzingPersonality ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <span className="w-4 h-4 mr-2">🧠</span>
+                Personality ({history.length}/5)
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       <Card className="bg-white/50 backdrop-blur-sm border-0 shadow-lg">

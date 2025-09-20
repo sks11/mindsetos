@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 import os
 import json
+import uuid
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -688,6 +689,181 @@ async def update_message_limits(request: MessageLimitsRequest):
     except Exception as e:
         print(f"DEBUG: Error updating message limits: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update message limits: {str(e)}")
+
+class PersonalityAnalysisResponse(BaseModel):
+    analysis_id: str
+    total_entries: int
+    analysis_date: str
+    value_system: str
+    motivators: str
+    demotivators: str
+    emotional_triggers: str
+    mindset_blocks: str
+    growth_opportunities: str
+    overall_summary: str
+
+class PersonalityAnalysisRequest(BaseModel):
+    userEmail: str
+
+@app.post("/analyze-personality", response_model=PersonalityAnalysisResponse)
+async def analyze_personality(request: PersonalityAnalysisRequest):
+    """Analyze user's personality based on their journal entries"""
+    
+    # Check message limit before processing
+    can_send, tier_info = check_message_limit(request.userEmail)
+    if not can_send:
+        print(f"DEBUG: User {request.userEmail} has reached limit, returning 429 error")
+        from fastapi import Response
+        return Response(
+            content="You've exhausted your quota for the month. If you need more, upgrade your tier by sending an email request to mindsetosai@gmail.com",
+            status_code=429,
+            media_type="text/plain"
+        )
+    
+    try:
+        # Get user's journal entries
+        result = supabase.table("journal_entries").select("*").eq("user_email", request.userEmail).order("created_at", desc=False).execute()
+        
+        if not result.data or len(result.data) < 5:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient entries for personality analysis. You need at least 5 entries, but only have {len(result.data) if result.data else 0}."
+            )
+        
+        entries = result.data
+        total_entries = len(entries)
+        
+        # Prepare entries for analysis
+        entry_texts = []
+        for entry in entries:
+            entry_text = f"Date: {entry.get('created_at', 'Unknown')}\n"
+            if entry.get('user_goal'):
+                entry_text += f"Goal: {entry['user_goal']}\n"
+            entry_text += f"Entry: {entry['journal_entry']}\n"
+            if entry.get('limiting_belief'):
+                entry_text += f"Identified Limiting Belief: {entry['limiting_belief']}\n"
+            entry_texts.append(entry_text)
+        
+        combined_entries = "\n---\n".join(entry_texts)
+        
+        # Create comprehensive personality analysis prompt
+        prompt = f"""You are a world-class psychology and mindset expert. Analyze this person's personality, mindset patterns, and psychological profile based on their {total_entries} journal entries.
+
+Journal Entries:
+{combined_entries}
+
+Provide a comprehensive personality analysis in this exact JSON format:
+
+{{
+  "value_system": "Core values and principles that guide this person's decisions and actions (2-3 sentences)",
+  "motivators": "What energizes, inspires, and drives this person forward (2-3 sentences)",
+  "demotivators": "What drains energy, creates resistance, or causes procrastination (2-3 sentences)",
+  "emotional_triggers": "Situations, thoughts, or events that consistently create strong emotional reactions (2-3 sentences)",
+  "mindset_blocks": "Mental barriers, limiting beliefs, and thought patterns that hold them back (2-3 sentences)",
+  "growth_opportunities": "Key areas where focused work could lead to significant personal development (2-3 sentences)",
+  "overall_summary": "A holistic view of their personality, psychological patterns, and mindset tendencies (3-4 sentences)"
+}}
+
+Focus on:
+- Recurring themes and patterns across entries
+- Underlying belief systems and mental models
+- Relationship with challenges, success, and failure
+- Self-talk patterns and internal dialogue
+- Values-driven vs. fear-driven behaviors
+- Growth mindset vs. fixed mindset tendencies
+
+Be insightful, empathetic, and actionable. Avoid generic advice."""
+
+        # Call OpenAI API for personality analysis
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a psychology and mindset expert. Always respond with valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1500
+        )
+        
+        analysis_text = response.choices[0].message.content.strip()
+        print(f"DEBUG: Personality analysis response: {analysis_text}")
+        
+        # Parse the JSON response
+        try:
+            analysis = json.loads(analysis_text)
+        except json.JSONDecodeError:
+            # Try to extract JSON if it's wrapped in markdown code blocks
+            if "```json" in analysis_text:
+                json_start = analysis_text.find("```json") + 7
+                json_end = analysis_text.find("```", json_start)
+                if json_end > json_start:
+                    analysis_text = analysis_text[json_start:json_end].strip()
+                    analysis = json.loads(analysis_text)
+                else:
+                    raise
+            else:
+                raise
+        
+        # Create analysis record
+        analysis_id = str(uuid.uuid4())
+        analysis_date = datetime.now().isoformat()
+        
+        # Save personality analysis to database
+        personality_record = {
+            "analysis_id": analysis_id,
+            "user_email": request.userEmail,
+            "total_entries": total_entries,
+            "analysis_date": analysis_date,
+            "value_system": analysis.get("value_system", ""),
+            "motivators": analysis.get("motivators", ""),
+            "demotivators": analysis.get("demotivators", ""),
+            "emotional_triggers": analysis.get("emotional_triggers", ""),
+            "mindset_blocks": analysis.get("mindset_blocks", ""),
+            "growth_opportunities": analysis.get("growth_opportunities", ""),
+            "overall_summary": analysis.get("overall_summary", "")
+        }
+        
+        try:
+            result = supabase.table("personality_analyses").insert(personality_record).execute()
+            print(f"DEBUG: Saved personality analysis to Supabase: {result.data}")
+        except Exception as db_error:
+            print(f"DEBUG: Failed to save personality analysis to Supabase: {db_error}")
+            # Continue anyway - don't fail the analysis if database save fails
+        
+        # Increment message count after successful analysis
+        increment_message_count(request.userEmail)
+        
+        # Return the analysis
+        return PersonalityAnalysisResponse(
+            analysis_id=analysis_id,
+            total_entries=total_entries,
+            analysis_date=analysis_date,
+            value_system=analysis.get("value_system", ""),
+            motivators=analysis.get("motivators", ""),
+            demotivators=analysis.get("demotivators", ""),
+            emotional_triggers=analysis.get("emotional_triggers", ""),
+            mindset_blocks=analysis.get("mindset_blocks", ""),
+            growth_opportunities=analysis.get("growth_opportunities", ""),
+            overall_summary=analysis.get("overall_summary", "")
+        )
+        
+    except HTTPException:
+        raise
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Failed to parse personality analysis response")
+    except Exception as e:
+        print(f"DEBUG: Error in personality analysis: {e}")
+        raise HTTPException(status_code=500, detail=f"Personality analysis failed: {str(e)}")
+
+@app.get("/personality-history/{user_email}")
+async def get_personality_history(user_email: str):
+    """Get user's personality analysis history"""
+    try:
+        result = supabase.table("personality_analyses").select("*").eq("user_email", user_email).order("analysis_date", desc=True).execute()
+        return {"analyses": result.data if result.data else []}
+    except Exception as e:
+        print(f"DEBUG: Error fetching personality history: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch personality history: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
