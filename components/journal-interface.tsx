@@ -75,18 +75,17 @@ export function JournalInterface() {
         
         // Update the session with fresh data
         await update()
+        console.log("DEBUG: Session update completed")
         
-        // Reload the page to ensure UI updates
-        window.location.reload()
+        // Force a small delay to ensure state updates
+        setTimeout(() => {
+          console.log("DEBUG: Current session state:", session)
+        }, 100)
       } else {
         console.error("Failed to refresh session via API")
-        // Fallback: just reload the page
-        window.location.reload()
       }
     } catch (error) {
       console.error("Failed to refresh session:", error)
-      // Fallback: reload the page
-      window.location.reload()
     }
   }
 
@@ -305,17 +304,22 @@ export function JournalInterface() {
       setHistory(prevHistory => [newEntry, ...prevHistory]);
       
       // Don't reset the form immediately - let user see the entry was added
-      // We'll clear it after a brief delay or when they start a new entry
       setError(null);
       
-      // Refresh session to update message count (but don't reload page)
+      // Refresh session to update message count
       try {
+        console.log("DEBUG: Refreshing session after recording thought...")
         const sessionResponse = await fetch('/api/refresh-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         })
         if (sessionResponse.ok) {
+          const sessionData = await sessionResponse.json()
+          console.log("DEBUG: Session refresh response:", sessionData)
           await update()
+          console.log("DEBUG: Session updated successfully")
+        } else {
+          console.error("DEBUG: Session refresh failed with status:", sessionResponse.status)
         }
       } catch (sessionError) {
         console.error("Failed to refresh session:", sessionError)
@@ -373,17 +377,30 @@ export function JournalInterface() {
       const result = await response.json()
       setAnalysis(result)
 
-      // Don't automatically save to history yet - let user see the analysis first
-      // The analysis will be displayed below the current fields
+      // Automatically save the analyzed entry to history
+      const historyEntry: HistoryEntry = {
+        id: Date.now().toString(),
+        date: new Date().toLocaleDateString(),
+        goal: goal.trim() || undefined,
+        journalEntry: journalEntry.trim(),
+        analysis: result,
+      }
+      saveToHistory(historyEntry)
       
-      // Refresh session to update message count (but don't reload page)
+      // Refresh session to update message count
       try {
+        console.log("DEBUG: Refreshing session after analysis...")
         const sessionResponse = await fetch('/api/refresh-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         })
         if (sessionResponse.ok) {
+          const sessionData = await sessionResponse.json()
+          console.log("DEBUG: Session refresh response:", sessionData)
           await update()
+          console.log("DEBUG: Session updated successfully")
+        } else {
+          console.error("DEBUG: Session refresh failed with status:", sessionResponse.status)
         }
       } catch (sessionError) {
         console.error("Failed to refresh session:", sessionError)
@@ -403,18 +420,7 @@ export function JournalInterface() {
   }
 
   const handleReset = () => {
-    // If there's an analysis, save it to history before clearing
-    if (analysis && journalEntry.trim()) {
-      const historyEntry: HistoryEntry = {
-        id: Date.now().toString(),
-        date: new Date().toLocaleDateString(),
-        goal: goal.trim() || undefined,
-        journalEntry: journalEntry.trim(),
-        analysis: analysis,
-      }
-      saveToHistory(historyEntry)
-    }
-    
+    // Simply clear the form - analysis is already auto-saved
     setJournalEntry("")
     setGoal("")
     setShowGoalInput(false)
@@ -422,26 +428,6 @@ export function JournalInterface() {
     setError(null)
     // Cancel any ongoing editing
     cancelEditing()
-  }
-
-  const handleSaveToHistory = () => {
-    if (analysis && journalEntry.trim()) {
-      const historyEntry: HistoryEntry = {
-        id: Date.now().toString(),
-        date: new Date().toLocaleDateString(),
-        goal: goal.trim() || undefined,
-        journalEntry: journalEntry.trim(),
-        analysis: analysis,
-      }
-      saveToHistory(historyEntry)
-      
-      // Clear the form after saving
-      setJournalEntry("")
-      setGoal("")
-      setShowGoalInput(false)
-      setAnalysis(null)
-      setError(null)
-    }
   }
 
   if (currentView === "history") {
@@ -775,23 +761,10 @@ export function JournalInterface() {
                   <p className="text-green-900 leading-relaxed">{analysis.reframingExercise}</p>
                 </div>
 
-                <div className="flex gap-3 pt-4">
+                <div className="flex justify-center pt-4">
                   <Button
-                    onClick={handleSaveToHistory}
-                    className="bg-purple-600 text-white hover:bg-purple-700 flex-1 h-12 text-base font-medium"
-                  >
-                    Save to History
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setAnalysis(null)
-                      setJournalEntry("")
-                      setGoal("")
-                      setShowGoalInput(false)
-                      setError(null)
-                    }}
-                    variant="outline"
-                    className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white/80 h-12"
+                    onClick={handleReset}
+                    className="bg-green-600 text-white hover:bg-green-700 px-8 h-12 text-base font-medium"
                   >
                     Start New Entry
                   </Button>
