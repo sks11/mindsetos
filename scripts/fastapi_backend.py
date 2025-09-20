@@ -47,6 +47,84 @@ if not supabase_url or not supabase_key:
 
 supabase = create_client(supabase_url, supabase_key)
 
+# Helper functions for user tier management
+def get_or_create_user_tier(user_email: str) -> dict:
+    """Get user tier info with monthly reset logic, create default if doesn't exist"""
+    try:
+        # First, reset monthly counts for all users if needed
+        current_month = datetime.now().strftime("%Y-%m")
+        
+        # Get user tier info
+        result = supabase.table("user_tiers").select("*").eq("user_email", user_email).execute()
+        
+        if result.data:
+            user_tier = result.data[0]
+            # Check if we need to reset for new month
+            if user_tier.get("current_month_year") != current_month:
+                # Reset monthly count
+                updated_tier = {
+                    "messages_used_this_month": 0,
+                    "current_month_year": current_month
+                }
+                result = supabase.table("user_tiers").update(updated_tier).eq("user_email", user_email).execute()
+                user_tier = result.data[0] if result.data else user_tier
+            
+            return user_tier
+        else:
+            # Create default free tier for new user
+            # For testing: use 2 messages for free tier
+            # For production: use 100 messages for free tier
+            new_tier = {
+                "user_email": user_email,
+                "tier": "free",
+                "messages_used_this_month": 0,
+                "messages_limit": 100,  # Production limit
+                "current_month_year": current_month
+            }
+            result = supabase.table("user_tiers").insert(new_tier).execute()
+            return result.data[0]
+    except Exception as e:
+        print(f"DEBUG: Error getting/creating user tier: {e}")
+        # Return default values if database fails
+        return {
+            "user_email": user_email,
+            "tier": "free",
+            "messages_used_this_month": 0,
+            "messages_limit": 2,  # Testing limit
+            "current_month_year": datetime.now().strftime("%Y-%m")
+        }
+
+def check_message_limit(user_email: str) -> tuple[bool, dict]:
+    """Check if user can send more messages this month. Returns (can_send, tier_info)"""
+    tier_info = get_or_create_user_tier(user_email)
+    can_send = tier_info["messages_used_this_month"] < tier_info["messages_limit"]
+    print(f"DEBUG: Checking limit for {user_email}: {tier_info['messages_used_this_month']}/{tier_info['messages_limit']} - Can send: {can_send}")
+    return can_send, tier_info
+
+def increment_message_count(user_email: str) -> dict:
+    """Increment user's monthly message count"""
+    try:
+        # Get current count and increment
+        current_tier = get_or_create_user_tier(user_email)
+        old_count = current_tier["messages_used_this_month"]
+        new_count = old_count + 1
+        
+        print(f"DEBUG: Incrementing message count for {user_email}: {old_count} -> {new_count}")
+        
+        result = supabase.table("user_tiers").update({
+            "messages_used_this_month": new_count
+        }).eq("user_email", user_email).execute()
+        
+        if result.data:
+            print(f"DEBUG: Successfully updated message count to {new_count}")
+            return result.data[0]
+        else:
+            print(f"DEBUG: Failed to update message count, returning current tier")
+            return get_or_create_user_tier(user_email)
+    except Exception as e:
+        print(f"DEBUG: Error incrementing message count: {e}")
+        return get_or_create_user_tier(user_email)
+
 class JournalRequest(BaseModel):
     journalEntry: str
     userGoal: str = ""
@@ -76,10 +154,33 @@ class RecordThoughtRequest(BaseModel):
     journalEntry: str
     goal: Optional[str] = None
 
+class UserTierResponse(BaseModel):
+    tier: str
+    messages_used_this_month: int
+    messages_limit: int
+    messages_remaining: int
+    current_month_year: str
+
+class UpdateTierRequest(BaseModel):
+    userEmail: str
+    tier: str
+
 @app.post("/record-thought")
 async def record_thought(request: RecordThoughtRequest):
     """Save a journal entry without analysis."""
+    # Check message limit before processing
+    can_send, tier_info = check_message_limit(request.userEmail)
+    if not can_send:
+        print(f"DEBUG: User {request.userEmail} has reached limit, returning 429 error")
+        from fastapi import Response
+        return Response(
+            content="You've exhausted your quota for the month. If you need more, upgrade your tier by sending an email request to mindsetosai@gmail.com",
+            status_code=429,
+            media_type="text/plain"
+        )
+    
     try:
+        
         journal_entry = {
             "user_email": request.userEmail,
             "journal_entry": request.journalEntry.strip(),
@@ -89,16 +190,32 @@ async def record_thought(request: RecordThoughtRequest):
         result = supabase.table("journal_entries").insert(journal_entry).execute()
         
         if result.data:
+            # Increment message count after successful recording
+            increment_message_count(request.userEmail)
             return {"message": "Thought recorded successfully", "entry": result.data[0]}
         else:
             raise HTTPException(status_code=500, detail="Failed to record thought")
             
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 429) without modification
+        raise
     except Exception as e:
         print(f"DEBUG: Error recording thought: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to record thought: {str(e)}")
 
 @app.post("/analyze-journal", response_model=AnalysisResponse)
 async def analyze_journal(request: JournalRequest):
+    # Check message limit before processing
+    can_send, tier_info = check_message_limit(request.userEmail)
+    if not can_send:
+        print(f"DEBUG: User {request.userEmail} has reached limit, returning 429 error")
+        from fastapi import Response
+        return Response(
+            content="You've exhausted your quota for the month. If you need more, upgrade your tier by sending an email request to mindsetosai@gmail.com",
+            status_code=429,
+            media_type="text/plain"
+        )
+    
     try:
         # Craft the mindset coaching prompt
         goal_context = f"The user's primary goal is \"{request.userGoal}\". " if request.userGoal else ""
@@ -167,8 +284,14 @@ Speak in a supportive and empowering tone. Focus on actionable insights. Be enco
             print(f"DEBUG: Failed to save to Supabase: {db_error}")
             # Continue anyway - don't fail the analysis if database save fails
         
+        # Increment message count after successful analysis
+        increment_message_count(request.userEmail)
+        
         return analysis_response
         
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 429) without modification
+        raise
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Failed to parse AI response")
     except Exception as e:
@@ -219,9 +342,352 @@ async def delete_history_entry(user_email: str, entry_id: str):
         print(f"DEBUG: Error deleting entry: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete entry: {str(e)}")
 
+@app.get("/user-tier/{user_email}", response_model=UserTierResponse)
+async def get_user_tier(user_email: str):
+    """Get user's tier information and monthly message usage"""
+    try:
+        tier_info = get_or_create_user_tier(user_email)
+        return UserTierResponse(
+            tier=tier_info["tier"],
+            messages_used_this_month=tier_info["messages_used_this_month"],
+            messages_limit=tier_info["messages_limit"],
+            messages_remaining=tier_info["messages_limit"] - tier_info["messages_used_this_month"],
+            current_month_year=tier_info["current_month_year"]
+        )
+    except Exception as e:
+        print(f"DEBUG: Error getting user tier: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user tier: {str(e)}")
+
+@app.post("/update-tier")
+async def update_user_tier(request: UpdateTierRequest):
+    """Update user's subscription tier"""
+    try:
+        # Validate tier
+        if request.tier not in ["free", "premium"]:
+            raise HTTPException(status_code=400, detail="Invalid tier. Must be 'free' or 'premium'")
+        
+        # Set appropriate message limits
+        # For testing: use 2 messages for free tier, 5 for premium
+        # For production: use 100 for free tier, 500 for premium
+        messages_limit = 100 if request.tier == "free" else 500
+        
+        # Update or create user tier
+        current_month = datetime.now().strftime("%Y-%m")
+        tier_data = {
+            "user_email": request.userEmail,
+            "tier": request.tier,
+            "messages_limit": messages_limit,
+            "current_month_year": current_month
+        }
+        
+        # Try to update existing record first
+        result = supabase.table("user_tiers").update(tier_data).eq("user_email", request.userEmail).execute()
+        
+        # If no existing record, create new one
+        if not result.data:
+            tier_data["messages_used_this_month"] = 0
+            result = supabase.table("user_tiers").insert(tier_data).execute()
+        
+        if result.data:
+            return {"message": f"Tier updated to {request.tier} successfully", "tier_info": result.data[0]}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update tier")
+            
+    except Exception as e:
+        print(f"DEBUG: Error updating tier: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update tier: {str(e)}")
+
+@app.post("/test/reset-messages/{user_email}")
+async def reset_user_messages(user_email: str):
+    """TEST ENDPOINT: Reset user's message count to 0"""
+    try:
+        result = supabase.table("user_tiers").update({
+            "messages_used_this_month": 0
+        }).eq("user_email", user_email).execute()
+        
+        if result.data:
+            return {"message": f"Reset messages for {user_email}", "tier_info": result.data[0]}
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
+    except Exception as e:
+        print(f"DEBUG: Error resetting messages: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset messages: {str(e)}")
+
+@app.post("/test/set-messages/{user_email}/{count}")
+async def set_user_messages(user_email: str, count: int):
+    """TEST ENDPOINT: Set user's message count to specific number"""
+    try:
+        result = supabase.table("user_tiers").update({
+            "messages_used_this_month": count
+        }).eq("user_email", user_email).execute()
+        
+        if result.data:
+            return {"message": f"Set messages to {count} for {user_email}", "tier_info": result.data[0]}
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
+    except Exception as e:
+        print(f"DEBUG: Error setting messages: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to set messages: {str(e)}")
+
+@app.get("/debug/user-status/{user_email}")
+async def debug_user_status(user_email: str):
+    """DEBUG ENDPOINT: Get detailed user status"""
+    try:
+        tier_info = get_or_create_user_tier(user_email)
+        return {
+            "user_email": user_email,
+            "tier_info": tier_info,
+            "can_send": tier_info["messages_used_this_month"] < tier_info["messages_limit"],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e), "timestamp": datetime.now().isoformat()}
+
+@app.get("/admin/search-users")
+async def search_users(q: str = ""):
+    """Search for users by email (admin only)"""
+    try:
+        print(f"DEBUG: Search request for query: '{q}'")
+        
+        if not q or len(q) < 2:
+            return {"users": []}
+        
+        # Search for users in user_tiers table
+        result = supabase.table("user_tiers").select("user_email").ilike("user_email", f"%{q}%").limit(10).execute()
+        print(f"DEBUG: user_tiers result: {result.data}")
+        
+        # Also search in journal_entries for users who might not be in user_tiers yet
+        journal_result = supabase.table("journal_entries").select("user_email").ilike("user_email", f"%{q}%").limit(10).execute()
+        print(f"DEBUG: journal_entries result: {journal_result.data}")
+        
+        # Combine and deduplicate
+        emails = set()
+        if result.data:
+            for user in result.data:
+                emails.add(user["user_email"])
+        if journal_result.data:
+            for entry in journal_result.data:
+                emails.add(entry["user_email"])
+        
+        final_users = list(emails)[:10]
+        print(f"DEBUG: Final users list: {final_users}")
+        return {"users": final_users}
+    except Exception as e:
+        print(f"DEBUG: Error searching users: {e}")
+        return {"users": []}
+
+@app.get("/user/entries/{user_email}")
+async def get_user_own_entries(user_email: str, limit: int = 50):
+    """Get journal entries for a specific user (user can only see their own)"""
+    try:
+        result = supabase.table("journal_entries").select("*").eq("user_email", user_email).order("created_at", desc=True).limit(limit).execute()
+        return {"entries": result.data if result.data else []}
+    except Exception as e:
+        print(f"DEBUG: Error getting user entries: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get entries: {str(e)}")
+
+@app.put("/user/entries/{entry_id}")
+async def update_user_entry(entry_id: str, request: dict):
+    """Update a journal entry (user can only update their own entries)"""
+    try:
+        # Get the entry first to verify it exists and belongs to the user
+        existing = supabase.table("journal_entries").select("*").eq("id", entry_id).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        
+        entry = existing.data[0]
+        user_email = request.get("user_email")
+        
+        # Verify the user owns this entry
+        if entry["user_email"] != user_email:
+            raise HTTPException(status_code=403, detail="You can only edit your own entries")
+        
+        # Update the entry
+        update_data = {}
+        if "journal_entry" in request:
+            update_data["journal_entry"] = request["journal_entry"]
+        if "user_goal" in request:
+            update_data["user_goal"] = request["user_goal"]
+        
+        result = supabase.table("journal_entries").update(update_data).eq("id", entry_id).execute()
+        
+        if result.data:
+            return {"message": "Entry updated successfully", "entry": result.data[0]}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update entry")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Error updating user entry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update entry: {str(e)}")
+
+@app.delete("/user/entries/{entry_id}")
+async def delete_user_entry(entry_id: str, request: dict):
+    """Delete a journal entry (user can only delete their own entries)"""
+    try:
+        # Get the entry first to verify it exists and belongs to the user
+        existing = supabase.table("journal_entries").select("*").eq("id", entry_id).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        
+        entry = existing.data[0]
+        user_email = request.get("user_email")
+        
+        # Verify the user owns this entry
+        if entry["user_email"] != user_email:
+            raise HTTPException(status_code=403, detail="You can only delete your own entries")
+        
+        # Delete the entry
+        result = supabase.table("journal_entries").delete().eq("id", entry_id).execute()
+        
+        return {"message": "Entry deleted successfully", "deleted_entry": entry}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Error deleting user entry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete entry: {str(e)}")
+
 @app.get("/")
 async def root():
     return {"message": "MindsetOS AI Journal Backend"}
+
+@app.get("/test-search")
+async def test_search():
+    """Test endpoint to verify search functionality"""
+    return {"message": "Search endpoint is working", "test_users": ["test@example.com", "admin@example.com"]}
+
+@app.get("/admin/entries/{user_email}")
+async def get_user_entries(user_email: str, limit: int = 50):
+    """Get all journal entries for a specific user (admin only)"""
+    try:
+        result = supabase.table("journal_entries").select("*").eq("user_email", user_email).order("created_at", desc=True).limit(limit).execute()
+        return {"entries": result.data if result.data else []}
+    except Exception as e:
+        print(f"DEBUG: Error getting user entries: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get entries: {str(e)}")
+
+@app.get("/admin/entries")
+async def get_all_entries(limit: int = 100):
+    """Get all journal entries (admin only)"""
+    try:
+        result = supabase.table("journal_entries").select("*").order("created_at", desc=True).limit(limit).execute()
+        return {"entries": result.data if result.data else []}
+    except Exception as e:
+        print(f"DEBUG: Error getting all entries: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get entries: {str(e)}")
+
+@app.put("/admin/entries/{entry_id}")
+async def update_entry(entry_id: str, request: dict):
+    """Update a journal entry (admin only)"""
+    try:
+        # Get the entry first to verify it exists
+        existing = supabase.table("journal_entries").select("*").eq("id", entry_id).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        
+        # Update the entry
+        update_data = {}
+        if "journal_entry" in request:
+            update_data["journal_entry"] = request["journal_entry"]
+        if "user_goal" in request:
+            update_data["user_goal"] = request["user_goal"]
+        if "ai_analysis" in request:
+            update_data["ai_analysis"] = request["ai_analysis"]
+        
+        result = supabase.table("journal_entries").update(update_data).eq("id", entry_id).execute()
+        
+        if result.data:
+            return {"message": "Entry updated successfully", "entry": result.data[0]}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update entry")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Error updating entry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update entry: {str(e)}")
+
+@app.delete("/admin/entries/{entry_id}")
+async def delete_entry(entry_id: str):
+    """Delete a journal entry (admin only)"""
+    try:
+        # Get the entry first to verify it exists
+        existing = supabase.table("journal_entries").select("*").eq("id", entry_id).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        
+        # Delete the entry
+        result = supabase.table("journal_entries").delete().eq("id", entry_id).execute()
+        
+        return {"message": "Entry deleted successfully", "deleted_entry": existing.data[0]}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Error deleting entry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete entry: {str(e)}")
+
+@app.get("/admin/message-limits")
+async def get_message_limits():
+    """Get current message limits for free and premium tiers"""
+    try:
+        # Get current limits from user_tiers table (using a sample user or default values)
+        result = supabase.table("user_tiers").select("tier, messages_limit").execute()
+        
+        # Extract unique limits by tier
+        limits = {"free": 2, "premium": 5}  # Default values
+        
+        if result.data:
+            for user in result.data:
+                if user["tier"] == "free":
+                    limits["free"] = user["messages_limit"]
+                elif user["tier"] == "premium":
+                    limits["premium"] = user["messages_limit"]
+        
+        return {"limits": limits}
+    except Exception as e:
+        print(f"DEBUG: Error getting message limits: {e}")
+        return {"limits": {"free": 100, "premium": 500}}
+
+class MessageLimitsRequest(BaseModel):
+    free_limit: int = 100
+    premium_limit: int = 500
+
+@app.post("/admin/update-message-limits")
+async def update_message_limits(request: MessageLimitsRequest):
+    """Update message limits for free and premium tiers"""
+    try:
+        free_limit = request.free_limit
+        premium_limit = request.premium_limit
+        
+        print(f"DEBUG: Updating limits - Free: {free_limit}, Premium: {premium_limit}")
+        
+        # Update all free tier users
+        free_result = supabase.table("user_tiers").update({
+            "messages_limit": free_limit
+        }).eq("tier", "free").execute()
+        
+        # Update all premium tier users
+        premium_result = supabase.table("user_tiers").update({
+            "messages_limit": premium_limit
+        }).eq("tier", "premium").execute()
+        
+        print(f"DEBUG: Updated {len(free_result.data) if free_result.data else 0} free users")
+        print(f"DEBUG: Updated {len(premium_result.data) if premium_result.data else 0} premium users")
+        
+        return {
+            "message": "Message limits updated successfully",
+            "limits": {"free": free_limit, "premium": premium_limit},
+            "updated_users": {
+                "free": len(free_result.data) if free_result.data else 0,
+                "premium": len(premium_result.data) if premium_result.data else 0
+            }
+        }
+    except Exception as e:
+        print(f"DEBUG: Error updating message limits: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update message limits: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
