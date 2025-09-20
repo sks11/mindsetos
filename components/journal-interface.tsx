@@ -240,16 +240,15 @@ export function JournalInterface() {
       })
       
       if (response.ok) {
-        alert('Entry deleted successfully!')
-        // Reload history
+        // Silently reload history - no success popup needed
         loadUserHistory()
       } else {
         const errorText = await response.text()
-        alert(`Failed to delete entry: ${errorText}`)
+        setError(`Failed to delete entry: ${errorText}`)
       }
     } catch (error) {
       console.error('Error deleting entry:', error)
-      alert(`Failed to delete entry: ${error instanceof Error ? error.message : String(error)}`)
+      setError(`Failed to delete entry: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

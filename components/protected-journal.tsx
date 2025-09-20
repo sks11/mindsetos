@@ -246,9 +246,7 @@ export function ProtectedJournal() {
       })
       
       if (response.ok) {
-        const data = await response.json()
-        alert('Entry deleted successfully!')
-        // Reload entries
+        // Silently reload entries - no success popup needed
         loadEntries(selectedUserEmail)
       } else {
         const errorText = await response.text()
@@ -256,7 +254,7 @@ export function ProtectedJournal() {
       }
     } catch (error) {
       console.error('Error deleting entry:', error)
-      alert(`Failed to delete entry: ${error.message}`)
+      alert(`Failed to delete entry: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
