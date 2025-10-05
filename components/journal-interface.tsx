@@ -50,15 +50,34 @@ interface HistoryEntry {
   date: string
   goal?: string
   journalEntry: string
+  emotion?: string
   analysis?: AnalysisResult
 }
 
 export function JournalInterface() {
   const { data: session, update } = useSession() as { data: ExtendedSession | null, update: () => Promise<ExtendedSession | null> }
   const [currentView, setCurrentView] = useState<"journal" | "history" | "personality">("journal")
+  
+  // Restore currentView from sessionStorage on mount (client-side only)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem('currentView')
+      if (stored && ['journal', 'history', 'personality'].includes(stored)) {
+        setCurrentView(stored as "journal" | "history" | "personality")
+      }
+    }
+  }, [])
+
+  // Persist currentView to sessionStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('currentView', currentView)
+    }
+  }, [currentView])
   const [journalEntry, setJournalEntry] = useState("")
   const [goal, setGoal] = useState("")
   const [showGoalInput, setShowGoalInput] = useState(false)
+  const [selectedEmotion, setSelectedEmotion] = useState<string>("")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -69,9 +88,40 @@ export function JournalInterface() {
   const [editingText, setEditingText] = useState("")
   const [editingGoal, setEditingGoal] = useState("")
   const [personalityAnalysis, setPersonalityAnalysis] = useState<PersonalityAnalysis | null>(null)
+  
+  // Persist personality analysis in sessionStorage to prevent loss on re-renders
+  useEffect(() => {
+    if (typeof window !== 'undefined' && personalityAnalysis) {
+      sessionStorage.setItem('currentPersonalityAnalysis', JSON.stringify(personalityAnalysis))
+    }
+  }, [personalityAnalysis])
+  
+  // Restore personality analysis from sessionStorage on mount (client-side only)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem('currentPersonalityAnalysis')
+      if (stored && !personalityAnalysis) {
+        try {
+          const parsed = JSON.parse(stored)
+          setPersonalityAnalysis(parsed)
+        } catch (error) {
+          sessionStorage.removeItem('currentPersonalityAnalysis')
+        }
+      }
+    }
+  }, [])
   const [isAnalyzingPersonality, setIsAnalyzingPersonality] = useState(false)
   const [personalityHistory, setPersonalityHistory] = useState<PersonalityAnalysis[]>([])
   const [isLoadingPersonalityHistory, setIsLoadingPersonalityHistory] = useState(false)
+
+  // Emotion options with emoticons
+  const emotionOptions = [
+    { value: "very_sad", label: "Very Sad", emoji: "😢" },
+    { value: "sad", label: "Sad", emoji: "😔" },
+    { value: "neutral", label: "Neutral", emoji: "😐" },
+    { value: "happy", label: "Happy", emoji: "😊" },
+    { value: "very_happy", label: "Very Happy", emoji: "😄" }
+  ]
 
   // Refresh session to update message count
   const refreshSession = async () => {
@@ -179,6 +229,21 @@ export function JournalInterface() {
       setHistory([])
     }
   }, [session?.user?.email])
+
+  // Load personality history when personality view is accessed
+  useEffect(() => {
+    if (currentView === "personality" && session?.user?.email && personalityHistory.length === 0) {
+      loadPersonalityHistory()
+    }
+  }, [currentView, session?.user?.email])
+
+  // Auto-load the most recent personality analysis if none is currently loaded
+  useEffect(() => {
+    if (currentView === "personality" && !personalityAnalysis && personalityHistory.length > 0) {
+      // Auto-load the most recent analysis
+      setPersonalityAnalysis(personalityHistory[0])
+    }
+  }, [currentView, personalityAnalysis, personalityHistory])
 
   // This function is no longer needed as the backend auto-saves
   const saveToHistory = (entry: HistoryEntry) => {
@@ -292,6 +357,7 @@ export function JournalInterface() {
           userEmail: session.user.email,
           journalEntry: journalEntry.trim(),
           goal: goal.trim() || undefined,
+          emotion: selectedEmotion || undefined,
         }),
       });
 
@@ -307,17 +373,8 @@ export function JournalInterface() {
 
       const result = await response.json();
       
-      // Create a new entry to show immediately below the current fields
-      const newEntry: HistoryEntry = {
-        id: result.entry.id.toString(),
-        date: new Date().toLocaleDateString(),
-        goal: goal.trim() || undefined,
-        journalEntry: journalEntry.trim(),
-        analysis: undefined, // No analysis for recorded thoughts
-      }
-      
-      // Add the new entry to the top of history
-      setHistory(prevHistory => [newEntry, ...prevHistory]);
+      // Reload history from server to get the complete entry with all fields
+      await loadUserHistory();
       
       // Don't reset the form immediately - let user see the entry was added
       setError(null);
@@ -440,6 +497,7 @@ export function JournalInterface() {
     setJournalEntry("")
     setGoal("")
     setShowGoalInput(false)
+    setSelectedEmotion("")
     setAnalysis(null)
     setError(null)
     // Cancel any ongoing editing
@@ -464,7 +522,27 @@ export function JournalInterface() {
     }
   }
 
-  // Handle personality analysis
+  // Navigate to personality view (load existing analysis or show option to generate)
+  const handleGoToPersonality = async () => {
+    if (!session?.user?.email) {
+      setError("You must be logged in to view personality analysis.")
+      return
+    }
+
+    setCurrentView("personality")
+    
+    // Load personality history if not already loaded
+    if (personalityHistory.length === 0) {
+      await loadPersonalityHistory()
+    }
+    
+    // If no current analysis but history exists, load the most recent one
+    if (!personalityAnalysis && personalityHistory.length > 0) {
+      setPersonalityAnalysis(personalityHistory[0])
+    }
+  }
+
+  // Generate new personality analysis
   const handlePersonalityAnalysis = async () => {
     if (!session?.user?.email) {
       setError("You must be logged in to analyze your personality.")
@@ -507,10 +585,15 @@ export function JournalInterface() {
       setPersonalityAnalysis(result)
       setCurrentView("personality")
       
-      // Refresh personality history
-      await loadPersonalityHistory()
+      // Refresh personality history (don't let this fail the main operation)
+      try {
+        await loadPersonalityHistory()
+      } catch (historyError) {
+        console.error("Failed to load personality history:", historyError)
+        // Don't fail the main operation if history loading fails
+      }
       
-      // Refresh session to update message count
+      // Refresh session to update message count (don't let this fail the main operation)
       try {
         const sessionResponse = await fetch('/api/refresh-session', {
           method: 'POST',
@@ -521,6 +604,7 @@ export function JournalInterface() {
         }
       } catch (sessionError) {
         console.error("Failed to refresh session:", sessionError)
+        // Don't fail the main operation if session refresh fails
       }
 
     } catch (err) {
@@ -533,7 +617,8 @@ export function JournalInterface() {
       } else {
         setError(err instanceof Error ? err.message : "Something went wrong. Please try again.")
       }
-      // Reset the analysis state on error
+      // Only reset the analysis state if the main personality analysis request failed
+      // Don't reset if it was just a secondary operation (history/session) that failed
       setPersonalityAnalysis(null)
     } finally {
       setIsAnalyzingPersonality(false)
@@ -654,6 +739,20 @@ export function JournalInterface() {
                       )}
                     </div>
 
+                    {entry.emotion && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-foreground">Feeling:</span>
+                        <div className="flex items-center gap-2 px-2 py-1 bg-purple-50 border border-purple-200 rounded-lg">
+                          <span className="text-base">
+                            {emotionOptions.find(e => e.value === entry.emotion)?.emoji || "😐"}
+                          </span>
+                          <span className="text-sm text-purple-800">
+                            {emotionOptions.find(e => e.value === entry.emotion)?.label || entry.emotion}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     {entry.analysis && (
                       <>
                         <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
@@ -688,7 +787,13 @@ export function JournalInterface() {
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <Button
-              onClick={() => setCurrentView("journal")}
+              onClick={() => {
+                setCurrentView("journal")
+                // Clear personality analysis from sessionStorage when explicitly navigating away
+                if (typeof window !== 'undefined') {
+                  sessionStorage.removeItem('currentPersonalityAnalysis')
+                }
+              }}
               variant="outline"
               className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white/80"
             >
@@ -696,6 +801,27 @@ export function JournalInterface() {
               Back to Journal
             </Button>
             <h2 className="text-2xl font-semibold text-foreground">Personality Analysis</h2>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              onClick={handlePersonalityAnalysis}
+              disabled={isAnalyzingPersonality || history.length < 5}
+              variant="outline"
+              className="border-purple-300 text-purple-700 hover:bg-purple-50 bg-white/80 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={history.length < 5 ? `Need ${5 - history.length} more entries for personality analysis` : "Generate new personality analysis"}
+            >
+              {isAnalyzingPersonality ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Regenerate Analysis
+                </>
+              )}
+            </Button>
           </div>
         </div>
 
@@ -809,7 +935,46 @@ export function JournalInterface() {
         ) : (
           <Card className="bg-white/50 backdrop-blur-sm border-0 shadow-lg">
             <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">No personality analysis available.</p>
+              <p className="text-muted-foreground mb-4">No personality analysis available.</p>
+              <div className="space-y-4">
+                {personalityHistory.length > 0 && (
+                  <div className="space-y-4">
+                    <p className="text-sm text-gray-600">You have previous analyses available:</p>
+                    <Button
+                      onClick={() => setPersonalityAnalysis(personalityHistory[0])}
+                      variant="outline"
+                      className="border-purple-300 text-purple-700 hover:bg-purple-50 mr-2"
+                    >
+                      Load Most Recent Analysis
+                    </Button>
+                  </div>
+                )}
+                <div className="mt-4">
+                  <Button
+                    onClick={handlePersonalityAnalysis}
+                    disabled={isAnalyzingPersonality || history.length < 5}
+                    className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={history.length < 5 ? `Need ${5 - history.length} more entries for personality analysis` : "Generate your first personality analysis"}
+                  >
+                    {isAnalyzingPersonality ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating Analysis...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4 mr-2" />
+                        Generate New Analysis
+                      </>
+                    )}
+                  </Button>
+                  {history.length < 5 && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      You need at least 5 journal entries for personality analysis. You currently have {history.length} entries.
+                    </p>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -819,6 +984,14 @@ export function JournalInterface() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
+      {/* Hidden button for sidebar to trigger personality view */}
+      <button
+        data-personality-trigger
+        onClick={handleGoToPersonality}
+        className="hidden"
+        aria-hidden="true"
+      />
+      
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           {/* Message Counter */}
@@ -855,25 +1028,6 @@ export function JournalInterface() {
             <History className="w-4 h-4 mr-2" />
             History ({history.length})
           </Button>
-          <Button
-            onClick={handlePersonalityAnalysis}
-            disabled={isAnalyzingPersonality || history.length < 5}
-            variant="outline"
-            className="border-purple-300 text-purple-700 hover:bg-purple-50 bg-white/80 disabled:opacity-50 disabled:cursor-not-allowed"
-            title={history.length < 5 ? `Need ${5 - history.length} more entries for personality analysis` : "Analyze your personality based on journal entries"}
-          >
-            {isAnalyzingPersonality ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Analyzing...
-              </>
-            ) : (
-              <>
-                <span className="w-4 h-4 mr-2">🧠</span>
-                Personality ({history.length}/5)
-              </>
-            )}
-          </Button>
         </div>
       </div>
 
@@ -908,6 +1062,28 @@ export function JournalInterface() {
               className="min-h-[160px] bg-white/80 border-gray-200 text-foreground placeholder:text-muted-foreground resize-none text-base leading-relaxed"
             />
 
+            {/* Emotion Selector */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">How are you feeling? (optional)</label>
+              <div className="flex gap-2 flex-wrap">
+                {emotionOptions.map((emotion) => (
+                  <button
+                    key={emotion.value}
+                    type="button"
+                    onClick={() => setSelectedEmotion(selectedEmotion === emotion.value ? "" : emotion.value)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
+                      selectedEmotion === emotion.value
+                        ? "bg-purple-100 border-purple-300 text-purple-800"
+                        : "bg-white/80 border-gray-200 text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    <span className="text-lg">{emotion.emoji}</span>
+                    <span className="text-sm">{emotion.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {error && (
               <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-200">{error}</div>
             )}
@@ -933,7 +1109,7 @@ export function JournalInterface() {
                 disabled={!journalEntry.trim()}
                 className="bg-green-600 text-white hover:bg-green-700 flex-1 h-12 text-base font-medium"
               >
-                Record Thought
+                Record Thought/Feeling
               </Button>
 
               {(journalEntry || analysis || showGoalInput) && (

@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { JournalInterface } from "@/components/journal-interface"
+import { BoxBreathingMeditation } from "@/components/box-breathing-meditation"
 import { isAdmin, getAdminConfig } from "@/lib/admin"
+import { Sparkles, Heart, Lightbulb, MessageCircle, Wind } from "lucide-react"
 
 export function ProtectedJournal() {
   const { data: session, status } = useSession({ required: true })
   const [showAdminPanel, setShowAdminPanel] = useState(false)
+  const [activeFeature, setActiveFeature] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const [selectedUserEmail, setSelectedUserEmail] = useState("")
   const [selectedUserInfo, setSelectedUserInfo] = useState<any>(null)
@@ -727,7 +730,145 @@ export function ProtectedJournal() {
 
       {/* Main Content */}
       <main className="py-8">
-        <JournalInterface />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* Left Sidebar - Feature Navigation */}
+            <aside className="lg:w-64 w-full flex-shrink-0">
+              <div className="lg:sticky lg:top-20">
+                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-3 mb-4 hidden lg:block">
+                  Your Toolkit
+                </h2>
+                
+                {/* Mobile: Horizontal scroll, Desktop: Vertical stack */}
+                <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-x-visible pb-2 lg:pb-0 scrollbar-hide">
+                {/* Personality Analysis Button */}
+                <button
+                  onClick={() => {
+                    setActiveFeature(null);
+                    // Trigger the personality view in the journal interface
+                    const personalityBtn = document.querySelector('[data-personality-trigger]') as HTMLButtonElement;
+                    if (personalityBtn) personalityBtn.click();
+                  }}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group whitespace-nowrap lg:w-full bg-white/80 hover:bg-gray-50 text-gray-700 border border-gray-200 hover:border-purple-300 hover:shadow-sm`}
+                >
+                  <Sparkles className="w-5 h-5 transition-colors text-gray-400 group-hover:text-purple-500" />
+                  <span className="text-sm font-medium">Personality Analysis</span>
+                </button>
+
+                  {/* Discover Values Button */}
+                  <button
+                    onClick={() => setActiveFeature(activeFeature === 'values' ? null : 'values')}
+                    className={`flex items-center justify-between gap-3 px-4 py-3 rounded-lg transition-all duration-200 group whitespace-nowrap lg:w-full ${
+                      activeFeature === 'values'
+                        ? 'bg-blue-50 text-blue-700 shadow-md border border-blue-200'
+                        : 'bg-white/80 hover:bg-gray-50 text-gray-700 border border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Heart className={`w-5 h-5 transition-colors ${
+                        activeFeature === 'values' ? 'text-blue-600' : 'text-gray-400 group-hover:text-blue-500'
+                      }`} />
+                      <span className="text-sm font-medium">Discover my Values</span>
+                    </div>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Soon</span>
+                  </button>
+
+                  {/* Decision Helper Button */}
+                  <button
+                    onClick={() => setActiveFeature(activeFeature === 'decision' ? null : 'decision')}
+                    className={`flex items-center justify-between gap-3 px-4 py-3 rounded-lg transition-all duration-200 group whitespace-nowrap lg:w-full ${
+                      activeFeature === 'decision'
+                        ? 'bg-green-50 text-green-700 shadow-md border border-green-200'
+                        : 'bg-white/80 hover:bg-gray-50 text-gray-700 border border-gray-200 hover:border-green-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Lightbulb className={`w-5 h-5 transition-colors ${
+                        activeFeature === 'decision' ? 'text-green-600' : 'text-gray-400 group-hover:text-green-500'
+                      }`} />
+                      <span className="text-sm font-medium">Help me Decide</span>
+                    </div>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Soon</span>
+                  </button>
+
+                  {/* Companion Button */}
+                  <button
+                    onClick={() => setActiveFeature(activeFeature === 'companion' ? null : 'companion')}
+                    className={`flex items-center justify-between gap-3 px-4 py-3 rounded-lg transition-all duration-200 group whitespace-nowrap lg:w-full ${
+                      activeFeature === 'companion'
+                        ? 'bg-pink-50 text-pink-700 shadow-md border border-pink-200'
+                        : 'bg-white/80 hover:bg-gray-50 text-gray-700 border border-gray-200 hover:border-pink-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <MessageCircle className={`w-5 h-5 transition-colors ${
+                        activeFeature === 'companion' ? 'text-pink-600' : 'text-gray-400 group-hover:text-pink-500'
+                      }`} />
+                      <span className="text-sm font-medium">Be my Companion</span>
+                    </div>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Soon</span>
+                  </button>
+
+                  {/* Center My Mind Button */}
+                  <button
+                    onClick={() => setActiveFeature(activeFeature === 'meditation' ? null : 'meditation')}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group whitespace-nowrap lg:w-full ${
+                      activeFeature === 'meditation'
+                        ? 'bg-indigo-50 text-indigo-700 shadow-md border border-indigo-200'
+                        : 'bg-white/80 hover:bg-gray-50 text-gray-700 border border-gray-200 hover:border-indigo-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <Wind className={`w-5 h-5 transition-colors ${
+                      activeFeature === 'meditation' ? 'text-indigo-600' : 'text-gray-400 group-hover:text-indigo-500'
+                    }`} />
+                    <span className="text-sm font-medium">Center my Mind</span>
+                  </button>
+                </div>
+              </div>
+            </aside>
+
+            {/* Main Content Area */}
+            <div className="flex-1 min-w-0">
+              {/* Show meditation when active */}
+              {activeFeature === 'meditation' && (
+                <div className="mb-6">
+                  <BoxBreathingMeditation />
+                </div>
+              )}
+
+              {/* Show placeholder content for other features */}
+              {activeFeature === 'values' && (
+                <div className="mb-6 p-8 bg-white/50 backdrop-blur-sm border-0 shadow-lg rounded-lg">
+                  <h3 className="text-xl font-semibold text-blue-700 mb-4">Discover Your Values</h3>
+                  <p className="text-gray-600">
+                    This feature is coming soon! Uncover your core values and what truly matters to you.
+                  </p>
+                </div>
+              )}
+
+              {activeFeature === 'decision' && (
+                <div className="mb-6 p-8 bg-white/50 backdrop-blur-sm border-0 shadow-lg rounded-lg">
+                  <h3 className="text-xl font-semibold text-green-700 mb-4">Decision Helper</h3>
+                  <p className="text-gray-600">
+                    This feature is coming soon! Get AI-powered guidance to make difficult decisions with clarity.
+                  </p>
+                </div>
+              )}
+
+              {activeFeature === 'companion' && (
+                <div className="mb-6 p-8 bg-white/50 backdrop-blur-sm border-0 shadow-lg rounded-lg">
+                  <h3 className="text-xl font-semibold text-pink-700 mb-4">Your AI Companion</h3>
+                  <p className="text-gray-600">
+                    This feature is coming soon! Have meaningful conversations with your AI companion for support and reflection.
+                  </p>
+                </div>
+              )}
+
+              {/* Main Journal Interface */}
+              <JournalInterface />
+            </div>
+          </div>
+        </div>
       </main>
       
       {/* Entry Edit Modal */}
