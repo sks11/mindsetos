@@ -154,6 +154,7 @@ class RecordThoughtRequest(BaseModel):
     userEmail: str
     journalEntry: str
     goal: Optional[str] = None
+    emotion: Optional[str] = None
 
 class UserTierResponse(BaseModel):
     tier: str
@@ -186,6 +187,7 @@ async def record_thought(request: RecordThoughtRequest):
             "user_email": request.userEmail,
             "journal_entry": request.journalEntry.strip(),
             "user_goal": request.goal.strip() if request.goal and request.goal.strip() else None,
+            "emotion": request.emotion if request.emotion else None,
         }
         
         result = supabase.table("journal_entries").insert(journal_entry).execute()
@@ -312,6 +314,7 @@ async def get_user_history(user_email: str):
                 "date": datetime.fromisoformat(entry["created_at"].replace('Z', '+00:00')).strftime("%m/%d/%Y"),
                 "goal": entry["user_goal"],
                 "journalEntry": entry["journal_entry"],
+                "emotion": entry.get("emotion"),
                 "analysis": None
             }
             
@@ -724,10 +727,10 @@ async def analyze_personality(request: PersonalityAnalysisRequest):
         # Get user's journal entries
         result = supabase.table("journal_entries").select("*").eq("user_email", request.userEmail).order("created_at", desc=False).execute()
         
-        if not result.data or len(result.data) < 5:
+        if not result.data or len(result.data) < 10:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Insufficient entries for personality analysis. You need at least 5 entries, but only have {len(result.data) if result.data else 0}."
+                status_code=400,
+                detail="At least 10 journal entries are needed for meaningful personality analysis."
             )
         
         entries = result.data
@@ -864,6 +867,42 @@ async def get_personality_history(user_email: str):
     except Exception as e:
         print(f"DEBUG: Error fetching personality history: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch personality history: {str(e)}")
+
+@app.post("/admin/create-personality-table")
+async def create_personality_table():
+    """Create the personality_analyses table if it doesn't exist"""
+    try:
+        # SQL to create the personality_analyses table
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS personality_analyses (
+            id SERIAL PRIMARY KEY,
+            analysis_id UUID UNIQUE NOT NULL,
+            user_email VARCHAR(255) NOT NULL,
+            total_entries INTEGER NOT NULL,
+            analysis_date TIMESTAMP WITH TIME ZONE NOT NULL,
+            value_system TEXT NOT NULL,
+            motivators TEXT NOT NULL,
+            demotivators TEXT NOT NULL,
+            emotional_triggers TEXT NOT NULL,
+            mindset_blocks TEXT NOT NULL,
+            growth_opportunities TEXT NOT NULL,
+            overall_summary TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_personality_analyses_user_email ON personality_analyses(user_email);
+        CREATE INDEX IF NOT EXISTS idx_personality_analyses_date ON personality_analyses(analysis_date);
+        CREATE INDEX IF NOT EXISTS idx_personality_analyses_analysis_id ON personality_analyses(analysis_id);
+        """
+        
+        # Execute the SQL using Supabase's RPC function
+        result = supabase.rpc('execute_sql', {'sql': create_table_sql}).execute()
+        
+        return {"message": "Successfully created personality_analyses table", "result": result.data}
+    except Exception as e:
+        print(f"DEBUG: Error creating personality table: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create personality table: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

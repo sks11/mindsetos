@@ -13,7 +13,7 @@ export const authOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 5 * 60, // 5 minutes - shorter session to force refresh
+    maxAge: 30 * 60, // 30 minutes - increased to prevent frequent re-auth during personality analysis
   },
   callbacks: {
     async session({ session, token }: any) {
